@@ -301,7 +301,7 @@ ${recipe.steps}
     // 这里可以集成分享功能，比如使用share_plus包
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
-        content: Text('菜谱已复制到剪贴板'),
+        content: Text('菜谱信息：$shareText'),
         duration: Duration(seconds: 2),
       ),
     );

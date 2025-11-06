@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:sqflite/sqflite.dart';
 import 'providers/recipe_provider.dart';
 import 'screens/home_screen.dart';
 import 'database/database_helper.dart';
