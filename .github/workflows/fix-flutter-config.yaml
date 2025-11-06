@@ -52,9 +52,10 @@ jobs:
         
         echo "✅ 找到Flutter项目"
         
-        # 修复 settings.gradle
+        # 创建或修复 settings.gradle
         echo "🔧 更新 settings.gradle..."
-        cat > android/settings.gradle << 'EOF'
+        mkdir -p android
+        cat > android/settings.gradle << 'SETTINGS_EOF'
 pluginManagement {
     def flutterSdkPath = {
         def properties = new Properties()
@@ -74,11 +75,12 @@ plugins {
 }
 
 include ":app"
-EOF
+SETTINGS_EOF
 
-        # 修复 app/build.gradle
+        # 创建或修复 app/build.gradle
         echo "🔧 更新 app/build.gradle..."
-        cat > android/app/build.gradle << 'EOF'
+        mkdir -p android/app
+        cat > android/app/build.gradle << 'BUILD_EOF'
 def localProperties = new Properties()
 def localPropertiesFile = rootProject.file('local.properties')
 if (localPropertiesFile.exists()) {
@@ -142,11 +144,11 @@ flutter {
 dependencies {
     implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk7:$kotlin_version"
 }
-EOF
+BUILD_EOF
 
-        # 修复 gradle.properties
+        # 创建或修复 gradle.properties
         echo "🔧 更新 gradle.properties..."
-        cat > android/gradle.properties << 'EOF'
+        cat > android/gradle.properties << 'PROPERTIES_EOF'
 # Flutter gradle.properties 配置文件 - 标准版
 
 # AndroidX支持
@@ -179,9 +181,9 @@ org.gradle.unsafe.configuration-cache-problems=warn
 # Android编译选项
 android.compileOptions.sourceCompatibility=JavaVersion.VERSION_1_8
 android.compileOptions.targetCompatibility=JavaVersion.VERSION_1_8
-EOF
+PROPERTIES_EOF
 
-        # 升级 Gradle wrapper
+        # 升级 Gradle wrapper（如果存在）
         echo "🔧 升级 Gradle wrapper..."
         if [ -f "android/gradle/wrapper/gradle-wrapper.properties" ]; then
             sed -i 's|gradle-8\.[0-9]\+-|gradle-8.4-|g' android/gradle/wrapper/gradle-wrapper.properties
@@ -252,7 +254,7 @@ EOF
         echo "🏗️ 开始构建Android APK..."
         
         # 根据输入决定构建类型
-        if [ "${{ github.event.inputs.debug }}" = "true" ] || [ "${{ github.event_name }}" = "pull_request" ]; then
+        if [ "${{ github.event.inputs.debug }}" = "true" ]; then
           echo "🔧 构建Debug APK..."
           flutter build apk --debug
           apk_path="build/outputs/apk/debug/app-debug.apk"
