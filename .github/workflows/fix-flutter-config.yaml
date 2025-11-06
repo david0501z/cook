@@ -52,10 +52,10 @@ jobs:
         
         echo "✅ 找到Flutter项目"
         
-        # 创建或修复 settings.gradle
+        # 修复 settings.gradle
         echo "🔧 更新 settings.gradle..."
         mkdir -p android
-        cat > android/settings.gradle << 'SETTINGS_EOF'
+        cat << 'SETTINGS_EOF' > android/settings.gradle
 pluginManagement {
     def flutterSdkPath = {
         def properties = new Properties()
@@ -77,10 +77,10 @@ plugins {
 include ":app"
 SETTINGS_EOF
 
-        # 创建或修复 app/build.gradle
+        # 修复 app/build.gradle
         echo "🔧 更新 app/build.gradle..."
         mkdir -p android/app
-        cat > android/app/build.gradle << 'BUILD_EOF'
+        cat << 'BUILD_EOF' > android/app/build.gradle
 def localProperties = new Properties()
 def localPropertiesFile = rootProject.file('local.properties')
 if (localPropertiesFile.exists()) {
@@ -146,9 +146,9 @@ dependencies {
 }
 BUILD_EOF
 
-        # 创建或修复 gradle.properties
+        # 修复 gradle.properties
         echo "🔧 更新 gradle.properties..."
-        cat > android/gradle.properties << 'PROPERTIES_EOF'
+        cat << 'PROPERTIES_EOF' > android/gradle.properties
 # Flutter gradle.properties 配置文件 - 标准版
 
 # AndroidX支持
@@ -183,7 +183,7 @@ android.compileOptions.sourceCompatibility=JavaVersion.VERSION_1_8
 android.compileOptions.targetCompatibility=JavaVersion.VERSION_1_8
 PROPERTIES_EOF
 
-        # 升级 Gradle wrapper（如果存在）
+        # 升级 Gradle wrapper
         echo "🔧 升级 Gradle wrapper..."
         if [ -f "android/gradle/wrapper/gradle-wrapper.properties" ]; then
             sed -i 's|gradle-8\.[0-9]\+-|gradle-8.4-|g' android/gradle/wrapper/gradle-wrapper.properties
