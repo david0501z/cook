@@ -1,0 +1,292 @@
+name: Flutter Project Configuration Fix
+
+on:
+  workflow_dispatch:
+    inputs:
+      debug:
+        description: 'Debug build instead of release'
+        required: false
+        default: 'false'
+        type: boolean
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  fix-flutter-config:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        
+    - name: Setup Flutter
+      uses: subosito/flutter-action@v2
+      with:
+        flutter-version: '3.35.8'
+        channel: 'stable'
+        
+    - name: Cache Flutter packages
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.pub-cache
+          ~/.flutter-devtools
+          ${{ runner.tool_cache }}/flutter
+        key: ${{ runner.os }}-flutter-${{ hashFiles('**/pubspec.lock') }}
+        
+    - name: Get Flutter info
+      run: |
+        flutter --version
+        flutter doctor
+        flutter config --no-analytics
+        
+    - name: Fix Flutter project configuration
+      run: |
+        echo "🔧 开始修复Flutter项目配置..."
+        
+        # 检查是否在Flutter项目根目录
+        if [ ! -f "pubspec.yaml" ]; then
+          echo "❌ 错误: 不在Flutter项目根目录"
+          exit 1
+        fi
+        
+        echo "✅ 找到Flutter项目"
+        
+        # 修复 settings.gradle
+        echo "🔧 更新 settings.gradle..."
+        cat > android/settings.gradle << 'EOF'
+plugins {
+    id "dev.flutter.flutter-plugin-loader" version "1.0.0"
+    id "com.android.application" version "8.2.0" apply false
+    id "org.jetbrains.kotlin.android" version "1.9.22" apply false
+}
+
+include ":app"
+EOF
+
+        # 修复 app/build.gradle
+        echo "🔧 更新 app/build.gradle..."
+        cat > android/app/build.gradle << 'EOF'
+def localProperties = new Properties()
+def localPropertiesFile = rootProject.file('local.properties')
+if (localPropertiesFile.exists()) {
+    localPropertiesFile.withReader('UTF-8') { reader ->
+        localProperties.load(reader)
+    }
+}
+
+def flutterRoot = localProperties.getProperty('flutter.sdk')
+if (flutterRoot == null) {
+    throw new GradleException("Flutter SDK not found. Define location with flutter.sdk in the local.properties file.")
+}
+
+def flutterVersionCode = localProperties.getProperty('flutter.versionCode')
+if (flutterVersionCode == null) {
+    flutterVersionCode = '1'
+}
+
+def flutterVersionName = localProperties.getProperty('flutter.versionName')
+if (flutterVersionName == null) {
+    flutterVersionName = '1.0'
+}
+
+android {
+    namespace 'com.recipe.app'
+    compileSdkVersion 34
+    ndkVersion "25.1.8937393"
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+
+    kotlinOptions {
+        jvmTarget = '1.8'
+    }
+
+    sourceSets {
+        main.java.srcDirs += 'src/main/kotlin'
+    }
+
+    defaultConfig {
+        applicationId "com.recipe.app"
+        minSdkVersion 21
+        targetSdkVersion 34
+        versionCode flutterVersionCode.toInteger()
+        versionName flutterVersionName
+    }
+
+    buildTypes {
+        release {
+            signingConfig signingConfigs.debug
+        }
+    }
+}
+
+flutter {
+    source '../..'
+}
+
+dependencies {
+    implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk7:$kotlin_version"
+}
+EOF
+
+        # 修复 gradle.properties
+        echo "🔧 更新 gradle.properties..."
+        cat > android/gradle.properties << 'EOF'
+# Flutter gradle.properties 配置文件 - 标准版
+
+# AndroidX支持
+android.useAndroidX=true
+android.enableJetifier=true
+
+# Gradle JVM参数 - 增加内存以解决构建问题
+org.gradle.jvmargs=-Xmx4G -XX:+HeapDumpOnOutOfMemoryError
+
+# 构建优化
+org.gradle.parallel=true
+org.gradle.caching=true
+
+# Kotlin配置
+kotlin.code.style=official
+
+# Android构建优化
+android.enableR8=true
+android.defaults.buildfeatures.buildconfig=true
+android.defaults.buildfeatures.aidl=false
+android.defaults.buildfeatures.renderscript=false
+android.defaults.buildfeatures.resvalues=false
+android.defaults.buildfeatures.shaders=false
+android.defaults.buildfeatures.viewBinding=false
+
+# 增量编译
+org.gradle.unsafe.configuration-cache=true
+org.gradle.unsafe.configuration-cache-problems=warn
+
+# Android编译选项
+android.compileOptions.sourceCompatibility=JavaVersion.VERSION_1_8
+android.compileOptions.targetCompatibility=JavaVersion.VERSION_1_8
+EOF
+
+        # 升级 Gradle wrapper
+        echo "🔧 升级 Gradle wrapper..."
+        if [ -f "android/gradle/wrapper/gradle-wrapper.properties" ]; then
+            sed -i 's|gradle-8\.[0-9]\+-|gradle-8.4-|g' android/gradle/wrapper/gradle-wrapper.properties
+            echo "✅ Gradle wrapper 升级完成"
+        else
+            echo "⚠️ Gradle wrapper 文件不存在，跳过升级"
+        fi
+
+        echo "✅ Flutter项目配置修复完成"
+        
+    - name: Setup Git
+      run: |
+        git config --global user.name "GitHub Actions"
+        git config --global user.email "actions@github.com"
+        
+    - name: Check changes
+      id: changes
+      run: |
+        git status
+        if git diff --quiet; then
+          echo "changed=false" >> $GITHUB_OUTPUT
+          echo "🔍 没有检测到配置变更"
+        else
+          echo "changed=true" >> $GITHUB_OUTPUT
+          echo "✅ 检测到配置变更"
+        fi
+        
+    - name: Commit and push changes
+      if: steps.changes.outputs.changed == 'true'
+      run: |
+        echo "📝 提交配置更新..."
+        git add android/settings.gradle
+        git add android/app/build.gradle
+        git add android/gradle.properties
+        git add android/gradle/wrapper/gradle-wrapper.properties
+        
+        git commit -m "chore(android): 修复Flutter项目配置
+
+- 更新到现代Gradle插件配置
+- 启用AndroidX支持
+- 增加JVM内存限制
+- 启用构建性能优化
+- 升级到Gradle 8.4
+
+修复 'unsupported Gradle project' 错误"
+        
+        echo "🚀 推送到远程仓库..."
+        git push origin HEAD:${{ github.ref_name }}
+        
+    - name: Clean and get dependencies
+      run: |
+        echo "🧹 清理项目缓存..."
+        flutter clean
+        
+        echo "📦 获取依赖包..."
+        flutter pub get
+        
+        echo "🔍 检查依赖关系..."
+        flutter pub deps
+        
+    - name: Analyze Flutter project
+      run: |
+        echo "🔍 分析Flutter项目..."
+        flutter analyze --no-fatal-infos
+        
+    - name: Build Android APK
+      run: |
+        echo "🏗️ 开始构建Android APK..."
+        
+        # 根据输入决定构建类型
+        if [ "${{ github.event.inputs.debug }}" = "true" ] || [ "${{ github.event_name }}" = "pull_request" ]; then
+          echo "🔧 构建Debug APK..."
+          flutter build apk --debug
+          apk_path="build/outputs/apk/debug/app-debug.apk"
+        else
+          echo "🚀 构建Release APK..."
+          flutter build apk --release
+          apk_path="build/outputs/apk/release/app-release.apk"
+        fi
+        
+        if [ -f "$apk_path" ]; then
+          echo "✅ APK构建成功: $apk_path"
+          ls -la $apk_path
+        else
+          echo "❌ APK构建失败"
+          exit 1
+        fi
+        
+    - name: Upload APK artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: recipe-app-apk
+        path: build/outputs/apk/**/*.apk
+        retention-days: 30
+        
+    - name: Create status summary
+      run: |
+        echo "## 🎉 Flutter项目配置修复完成" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### ✅ 修复内容" >> $GITHUB_STEP_SUMMARY
+        echo "- 更新了Android Gradle配置文件" >> $GITHUB_STEP_SUMMARY
+        echo "- 启用了AndroidX支持" >> $GITHUB_STEP_SUMMARY
+        echo "- 升级到Gradle 8.4" >> $GITHUB_STEP_SUMMARY
+        echo "- 优化了构建性能配置" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 📱 应用信息" >> $GITHUB_STEP_SUMMARY
+        echo "- **应用名称**: 菜谱大全" >> $GITHUB_STEP_SUMMARY
+        echo "- **包名**: com.recipe.app" >> $GITHUB_STEP_SUMMARY
+        echo "- **最低Android版本**: API 21" >> $GITHUB_STEP_SUMMARY
+        echo "- **包含菜谱**: 10个经典中式菜谱" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 🔗 相关文档" >> $GITHUB_STEP_SUMMARY
+        echo "- [Flutter配置修复指南](flutter_quick_fix_guide.md)" >> $GITHUB_STEP_SUMMARY
+        echo "- [详细技术报告](flutter_gradle_project_fix_complete.md)" >> $GITHUB_STEP_SUMMARY
+        echo "- [完整交付报告](flutter_recipe_app_final_delivery_complete.md)" >> $GITHUB_STEP_SUMMARY
