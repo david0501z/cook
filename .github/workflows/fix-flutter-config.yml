@@ -1,527 +1,80 @@
-name: Flutter Project Configuration Fix & Build
+name: Flutter 重建与构建
 
 on:
   workflow_dispatch:
     inputs:
-      debug:
-        description: '构建Debug APK (默认Release)'
-        required: false
-        default: 'false'
-        type: boolean
       force_rebuild:
         description: '强制重建项目结构'
         required: false
-        default: 'false'
+        default: 'true'
         type: boolean
-  push:
-    branches: [ main, develop ]
-  pull_request:
-    branches: [ main ]
 
 jobs:
-  fix-flutter-config:
+  rebuild-and-build:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
     
     steps:
-    - name: Checkout code
+    - name: 检出代码
       uses: actions/checkout@v4
+      
+    - name: 设置Java
+      uses: actions/setup-java@v4
       with:
-        fetch-depth: 0
-        clean: false
+        distribution: 'zulu'
+        java-version: '17'
         
-    - name: Setup Flutter
+    - name: 设置Flutter
       uses: subosito/flutter-action@v2
       with:
         flutter-version: '3.35.8'
         channel: 'stable'
         
-    - name: Cache Flutter packages
-      uses: actions/cache@v3
-      with:
-        path: |
-          ~/.pub-cache
-          ~/.flutter-devtools
-          ${{ runner.tool_cache }}/flutter
-        key: ${{ runner.os }}-flutter-${{ hashFiles('**/pubspec.lock') }}
-        restore-keys: |
-          ${{ runner.os }}-flutter-
-          
-    - name: Get Flutter info
+    - name: 备份当前项目
+      run: mv recipe_app recipe_app_backup
+      
+    - name: 创建新Flutter项目
+      run: flutter create -a kotlin recipe_app
+      
+    - name: 恢复用户代码
       run: |
-        flutter --version
-        flutter doctor --android-licenses
-        flutter config --no-analytics
-        echo "📍 工作目录: $(pwd)"
-        ls -la
+        cp -r recipe_app_backup/lib recipe_app/
+        cp -r recipe_app_backup/assets recipe_app/ 2>/dev/null || true
+        cp recipe_app_backup/pubspec.yaml recipe_app/
         
-    - name: Analyze current project structure
+    - name: 清理备份
+      run: rm -rf recipe_app_backup
+      
+    - name: 获取依赖
       run: |
-        echo "🔍 分析当前项目结构..."
-        if [ -f "pubspec.yaml" ]; then
-          echo "✅ 找到Flutter项目"
-          grep "^name:" pubspec.yaml
-        else
-          echo "❌ 未找到pubspec.yaml，不是有效的Flutter项目"
-          exit 1
-        fi
-        
-        if [ -d "android" ]; then
-          echo "✅ 找到Android配置"
-          ls android/
-        else
-          echo "❌ 未找到Android配置"
-          exit 1
-        fi
-
-    - name: Create project backup
-      run: |
-        echo "💾 创建项目备份..."
-        if [ ! -d "project_backup" ]; then
-          mkdir -p project_backup
-        fi
-        
-        # 备份重要文件
-        cp -r lib project_backup/ 2>/dev/null || true
-        cp -r assets project_backup/ 2>/dev/null || true
-        cp pubspec.yaml project_backup/ 2>/dev/null || true
-        cp -r .github project_backup/ 2>/dev/null || true
-        
-        echo "✅ 备份完成"
-        ls -la project_backup/
-
-    - name: Flutter project reconstruction
-      if: github.event.inputs.force_rebuild == 'true' || ! -f "android/settings.gradle" || ! -f "android/app/build.gradle"
-      run: |
-        echo "🔨 开始重建Flutter项目..."
-        
-        # 获取项目名称
-        PROJECT_NAME=$(grep "^name:" pubspec.yaml | awk '{print $2}')
-        echo "📦 项目名称: $PROJECT_NAME"
-        
-        # 创建临时目录
-        TEMP_DIR="temp_rebuild_$(date +%Y%m%d_%H%M%S)"
-        mkdir -p "$TEMP_DIR"
-        
-        # 创建新的Flutter项目
-        echo "🏗️ 创建全新项目..."
-        flutter create -t app "$TEMP_DIR/$PROJECT_NAME"
-        
-        # 复制重要文件
-        echo "📁 复制项目文件..."
-        
-        # 复制Dart代码
-        if [ -d "lib" ]; then
-          rm -rf "$TEMP_DIR/$PROJECT_NAME/lib"
-          cp -r lib "$TEMP_DIR/$PROJECT_NAME/"
-          echo "✅ 复制lib/目录"
-        fi
-        
-        # 复制assets
-        if [ -d "assets" ]; then
-          rm -rf "$TEMP_DIR/$PROJECT_NAME/assets"
-          cp -r assets "$TEMP_DIR/$PROJECT_NAME/"
-          echo "✅ 复制assets/目录"
-        fi
-        
-        # 复制pubspec.yaml
-        if [ -f "pubspec.yaml" ]; then
-          cp pubspec.yaml "$TEMP_DIR/$PROJECT_NAME/"
-          echo "✅ 复制pubspec.yaml"
-        fi
-        
-        # 复制.github
-        if [ -d ".github" ]; then
-          rm -rf "$TEMP_DIR/$PROJECT_NAME/.github"
-          cp -r .github "$TEMP_DIR/$PROJECT_NAME/"
-          echo "✅ 复制.github/目录"
-        fi
-        
-        # 复制其他文档
-        for file in README.md *.md; do
-          if [ -f "$file" ] && [ "$file" != "pubspec.yaml" ]; then
-            cp "$file" "$TEMP_DIR/$PROJECT_NAME/" 2>/dev/null || true
-          fi
-        done
-        
-        # 移动新项目文件
-        echo "🔄 替换项目文件..."
-        rm -rf lib assets pubspec.yaml .github *.md
-        
-        cp -r "$TEMP_DIR/$PROJECT_NAME"/* .
-        cp -r "$TEMP_DIR/$PROJECT_NAME"/.[^.]* . 2>/dev/null || true
-        
-        # 清理
-        rm -rf "$TEMP_DIR"
-        
-        echo "✅ 项目重建完成"
-
-    - name: Modern Flutter Android Configuration
-      run: |
-        echo "⚙️ 应用现代Flutter Android配置..."
-        
-        # 1. 更新 settings.gradle (最新标准格式)
-        echo "🔧 更新 settings.gradle..."
-        cat > android/settings.gradle << 'EOF'
-pluginManagement {
-    def flutterSdkPath = {
-        def properties = new Properties()
-        file("local.properties").withInputStream { properties.load(it) }
-        return properties.getProperty("flutter.sdk")
-    }()
-    
-    repositories {
-        google()
-        mavenCentral()
-        gradlePluginPortal()
-    }
-}
-
-plugins {
-    id "dev.flutter.flutter-gradle-plugin" apply false
-}
-
-include ":app"
-EOF
-
-        # 2. 更新 app/build.gradle (使用plugins block)
-        echo "🔧 更新 app/build.gradle..."
-        cat > android/app/build.gradle << 'EOF'
-plugins {
-    id "com.android.application"
-    id "kotlin-android"
-    id "dev.flutter.flutter-gradle-plugin"
-}
-
-def localProperties = new Properties()
-def localPropertiesFile = rootProject.file('local.properties')
-if (localPropertiesFile.exists()) {
-    localPropertiesFile.withReader('UTF-8') { reader ->
-        localProperties.load(reader)
-    }
-}
-
-def flutterRoot = localProperties.getProperty('flutter.sdk')
-if (flutterRoot == null) {
-    throw new GradleException("Flutter SDK not found. Define location with flutter.sdk in the local.properties file.")
-}
-
-def flutterVersionCode = localProperties.getProperty('flutter.versionCode')
-if (flutterVersionCode == null) {
-    flutterVersionCode = '1'
-}
-
-def flutterVersionName = localProperties.getProperty('flutter.versionName')
-if (flutterVersionName == null) {
-    flutterVersionName = '1.0'
-}
-
-android {
-    namespace 'com.example.recipe_app'
-    compileSdk 34
-    ndkVersion "25.1.8937393"
-
-    compileOptions {
-        sourceCompatibility JavaVersion.VERSION_1_8
-        targetCompatibility JavaVersion.VERSION_1_8
-    }
-
-    kotlinOptions {
-        jvmTarget = '1.8'
-    }
-
-    sourceSets {
-        main.java.srcDirs += 'src/main/kotlin'
-    }
-
-    defaultConfig {
-        applicationId "com.example.recipe_app"
-        minSdk 21
-        targetSdk 34
-        versionCode flutterVersionCode.toInteger()
-        versionName flutterVersionName
-        multiDexEnabled true
-    }
-
-    buildTypes {
-        release {
-            signingConfig signingConfigs.debug
-        }
-    }
-}
-
-flutter {
-    source '../..'
-}
-
-dependencies {
-    implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.9.22"
-}
-EOF
-
-        # 3. 更新 gradle.properties
-        echo "🔧 更新 gradle.properties..."
-        cat > android/gradle.properties << 'EOF'
-# Flutter Android 配置 - 现代化标准版
-
-# AndroidX支持
-android.useAndroidX=true
-android.enableJetifier=true
-
-# Gradle性能优化
-org.gradle.jvmargs=-Xmx4G -XX:+HeapDumpOnOutOfMemoryError
-org.gradle.parallel=true
-org.gradle.caching=true
-org.gradle.configureondemand=true
-
-# Kotlin配置
-kotlin.code.style=official
-kotlin.incremental=true
-
-# Android构建优化
-android.enableR8=true
-android.defaults.buildfeatures.buildconfig=true
-android.defaults.buildfeatures.aidl=false
-android.defaults.buildfeatures.renderscript=false
-android.defaults.buildfeatures.resvalues=false
-android.defaults.buildfeatures.shaders=false
-android.defaults.buildfeatures.viewBinding=false
-
-# 增量编译和缓存
-org.gradle.unsafe.configuration-cache=true
-org.gradle.unsafe.configuration-cache-problems=warn
-
-# Android编译选项
-android.compileOptions.sourceCompatibility=JavaVersion.VERSION_1_8
-android.compileOptions.targetCompatibility=JavaVersion.VERSION_1_8
-
-# 内存优化
-android.dexOptions.incremental=true
-android.dexOptions.javaMaxHeapSize=4g
-
-# 构建缓存
-android.enableBuildCache=true
-EOF
-
-        # 4. 更新 Gradle wrapper
-        echo "🔧 升级 Gradle wrapper..."
-        if [ -f "android/gradle/wrapper/gradle-wrapper.properties" ]; then
-            sed -i 's|gradle-[0-9]\.[0-9]\+\(-.*\)\?|gradle-8.4|g' android/gradle/wrapper/gradle-wrapper.properties
-            echo "✅ Gradle wrapper 升级到 8.4"
-        else
-            echo "⚠️ Gradle wrapper 文件不存在，创建新文件..."
-            mkdir -p android/gradle/wrapper
-            cat > android/gradle/wrapper/gradle-wrapper.properties << 'EOF'
-distributionBase=GRADLE_USER_HOME
-distributionPath=wrapper/dists
-distributionUrl=https\://services.gradle.org/distributions/gradle-8.4-all.zip
-networkTimeout=10000
-validateDistributionUrl=true
-zipStoreBase=GRADLE_USER_HOME
-zipStorePath=wrapper/dists
-EOF
-        fi
-
-        echo "✅ 现代Flutter Android配置应用完成"
-
-    - name: Fix project package name
-      run: |
-        echo "🔧 检查并修复包名..."
-        
-        # 获取包名
-        PACKAGE_NAME="com.example.recipe_app"
-        
-        # 更新 AndroidManifest.xml
-        if [ -f "android/app/src/main/AndroidManifest.xml" ]; then
-            sed -i "s/package=\"[^\"]*\"/package=\"$PACKAGE_NAME\"/" android/app/src/main/AndroidManifest.xml
-            echo "✅ 更新AndroidManifest.xml包名"
-        fi
-        
-        # 验证配置
-        grep -n "namespace\|applicationId" android/app/build.gradle || echo "⚠️ 未找到相关配置"
-
-    - name: Setup Git for commits
-      run: |
-        git config --global user.name "GitHub Actions"
-        git config --global user.email "actions@github.com"
-        echo "✅ Git配置完成"
-
-    - name: Check and commit configuration changes
-      id: changes
-      run: |
-        echo "🔍 检查配置变更..."
-        git status
-        
-        if git diff --quiet; then
-          echo "changed=false" >> $GITHUB_OUTPUT
-          echo "🔍 没有检测到配置变更"
-        else
-          echo "changed=true" >> $GITHUB_OUTPUT
-          echo "✅ 检测到配置变更"
-          git diff --stat
-        fi
-
-    - name: Commit configuration fixes
-      if: steps.changes.outputs.changed == 'true'
-      run: |
-        echo "📝 提交配置更新..."
-        
-        git add android/
-        git add .
-        
-        git commit -m "feat(android): 应用现代Flutter配置和重建
-
-- 使用最新的Flutter Gradle插件系统
-- 完全重建Android项目结构
-- 启用AndroidX和Jetifier支持
-- 升级到Gradle 8.4
-- 优化构建性能和内存配置
-- 修复'unsupported Gradle project'错误
-
-这个更新采用Flutter官方推荐的标准配置，
-确保项目可以正常构建和运行。"
-        
-        echo "🚀 推送到远程仓库..."
-        git push origin HEAD:${{ github.ref_name }}
-
-    - name: Clean and update dependencies
-      run: |
-        echo "🧹 清理和更新依赖..."
-        flutter clean
+        cd recipe_app
         flutter pub get
-        echo "✅ 依赖更新完成"
-
-    - name: Analyze Flutter project
+        
+    - name: 分析代码
       run: |
-        echo "🔍 分析Flutter项目..."
-        flutter analyze --no-fatal-infos
-        echo "✅ 项目分析完成"
-
-    - name: Build Android APK
+        cd recipe_app
+        flutter analyze
+        
+    - name: 运行测试
       run: |
-        echo "🏗️ 开始构建Android APK..."
+        cd recipe_app
+        flutter test
         
-        # 根据输入决定构建类型
-        if [ "${{ github.event.inputs.debug }}" = "true" ] || [ "${{ github.event_name }}" = "pull_request" ]; then
-          echo "🔧 构建Debug APK..."
-          flutter build apk --debug --verbose
-          APK_PATH="build/outputs/apk/debug/app-debug.apk"
-        else
-          echo "🚀 构建Release APK..."
-          flutter build apk --release --verbose
-          APK_PATH="build/outputs/apk/release/app-release.apk"
-        fi
-        
-        echo "📱 APK路径: $APK_PATH"
-        
-        if [ -f "$APK_PATH" ]; then
-          echo "✅ APK构建成功!"
-          ls -la "$APK_PATH"
-          file "$APK_PATH"
-        else
-          echo "❌ APK构建失败"
-          ls -la build/outputs/apk/
-          exit 1
-        fi
-
-    - name: Build Android App Bundle
+    - name: 构建APK
       run: |
-        echo "📦 构建Android App Bundle..."
+        cd recipe_app
+        flutter build apk --release
         
-        if [ "${{ github.event.inputs.debug }}" = "true" ] || [ "${{ github.event_name }}" = "pull_request" ]; then
-          echo "🔧 构建Debug AAB..."
-          flutter build appbundle --debug --verbose || echo "⚠️ Debug AAB构建失败，但APK构建成功"
-        else
-          echo "🚀 构建Release AAB..."
-          flutter build appbundle --release --verbose
-        fi
-
-    - name: Upload APK artifact
-      uses: actions/upload-artifact@v3
+    - name: 上传APK
+      uses: actions/upload-artifact@v4
       with:
-        name: recipe-app-apk-${{ github.run_number }}
-        path: |
-          build/outputs/apk/**/*.apk
-          build/outputs/bundle/**/*.aab
-        retention-days: 30
-        if-no-files-found: warn
-
-    - name: Test APK installation
-      if: contains(github.event.inputs.debug, 'true') || contains(github.event_name, 'pull_request')
+        name: app-release
+        path: recipe_app/build/app/outputs/flutter-apk/app-release.apk
+        
+    - name: 提交重建后的项目
+      if: github.event.inputs.force_rebuild == 'true'
       run: |
-        echo "🧪 测试APK (模拟安装检查)..."
-        
-        APK_FILE=$(find build/outputs/apk -name "*.apk" -type f | head -1)
-        if [ -n "$APK_FILE" ]; then
-          echo "📱 找到APK文件: $APK_FILE"
-          echo "📏 文件大小: $(du -h "$APK_FILE" | cut -f1)"
-          
-          # 简单的APK验证
-          file "$APK_FILE"
-          unzip -l "$APK_FILE" | head -5
-        else
-          echo "⚠️ 未找到APK文件进行测试"
-        fi
-
-    - name: Create detailed summary
-      run: |
-        BUILD_TYPE="Release"
-        if [ "${{ github.event.inputs.debug }}" = "true" ] || [ "${{ github.event_name }}" = "pull_request" ]; then
-          BUILD_TYPE="Debug"
-        fi
-        
-        echo "## 🎉 Flutter项目现代化配置完成" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "### ✅ 完成的现代化升级" >> $GITHUB_STEP_SUMMARY
-        echo "- 🔨 完全重建Flutter项目结构" >> $GITHUB_STEP_SUMMARY
-        echo "- ⚙️ 应用最新Flutter Gradle插件系统" >> $GITHUB_STEP_SUMMARY
-        echo "- 📱 启用AndroidX和Jetifier支持" >> $GITHUB_STEP_SUMMARY
-        echo "- 🚀 升级到Gradle 8.4" >> $GITHUB_STEP_SUMMARY
-        echo "- ⚡ 优化构建性能和内存配置" >> $GITHUB_STEP_SUMMARY
-        echo "- 🔧 修复'unsupported Gradle project'错误" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "### 📱 构建信息" >> $GITHUB_STEP_SUMMARY
-        echo "- **构建类型**: $BUILD_TYPE" >> $GITHUB_STEP_SUMMARY
-        echo "- **应用名称**: 菜谱大全" >> $GITHUB_STEP_SUMMARY
-        echo "- **包名**: com.example.recipe_app" >> $GITHUB_STEP_SUMMARY
-        echo "- **最低Android版本**: API 21" >> $GITHUB_STEP_SUMMARY
-        echo "- **Flutter版本**: 3.35.8" >> $GITHUB_STEP_SUMMARY
-        echo "- **Gradle版本**: 8.4" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "### 🎯 解决的关键问题" >> $GITHUB_STEP_SUMMARY
-        echo "- ✅ 'unsupported Gradle project' 错误完全修复" >> $GITHUB_STEP_SUMMARY
-        echo "- ✅ AndroidX依赖问题解决" >> $GITHUB_STEP_SUMMARY
-        echo "- ✅ Gradle插件弃用警告消除" >> $GITHUB_STEP_SUMMARY
-        echo "- ✅ 构建性能优化" >> $GITHUB_STEP_SUMMARY
-        echo "- ✅ 内存使用优化" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "### 📊 项目状态" >> $GITHUB_STEP_SUMMARY
-        BUILD_TIME=$(date '+%Y-%m-%d %H:%M:%S')
-        echo "- **构建时间**: $BUILD_TIME" >> $GITHUB_STEP_SUMMARY
-        echo "- **GitHub Run**: #${{ github.run_number }}" >> $GITHUB_STEP_SUMMARY
-        echo "- **分支**: ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
-        echo "- **触发方式**: ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "### 💡 使用方法" >> $GITHUB_STEP_SUMMARY
-        echo "1. 📥 下载页面上方的APK文件" >> $GITHUB_STEP_SUMMARY
-        echo "2. 📱 安装到Android设备" >> $GITHUB_STEP_SUMMARY
-        echo "3. 🔧 如需重新构建，手动运行此工作流" >> $GITHUB_STEP_SUMMARY
-        echo "4. 🛠️ 项目现在可以本地使用 'flutter run'" >> $GITHUB_STEP_SUMMARY
-
-    - name: Final verification
-      run: |
-        echo "🔍 最终验证..."
-        
-        # 验证关键文件存在
-        echo "检查关键配置文件:"
-        ls -la android/settings.gradle
-        ls -la android/app/build.gradle  
-        ls -la android/gradle.properties
-        
-        echo ""
-        echo "检查项目结构:"
-        find . -name "*.dart" | head -5
-        find . -name "*.jpg" -o -name "*.png" | head -3
-        
-        echo ""
-        echo "✅ 验证完成！项目已成功现代化配置并构建。"
+        git config --global user.name "github-actions[bot]"
+        git config --global user.email "github-actions[bot]@users.noreply.github.com"
+        git add .
+        git commit -m "自动重建Flutter项目结构 - $(date)"
+        git push
