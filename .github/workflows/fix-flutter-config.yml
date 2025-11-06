@@ -35,10 +35,13 @@ jobs:
         mv recipe_app recipe_app_backup
       
     - name: 创建新Flutter项目
-      run: flutter create -a kotlin recipe_app
+      run: |
+        cd ..
+        flutter create -a kotlin recipe_app
       
     - name: 恢复用户代码
       run: |
+        cd ..
         cp -r recipe_app_backup/lib recipe_app/
         cp -r recipe_app_backup/assets recipe_app/ 2>/dev/null || true
         cp recipe_app_backup/pubspec.yaml recipe_app/
