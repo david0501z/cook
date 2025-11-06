@@ -21,9 +21,8 @@ if (flutterVersionName == null) {
     flutterVersionName = '1.0'
 }
 
-apply plugin: 'com.android.application'
-apply plugin: 'kotlin-android'
-apply from: "$flutterRoot/packages/flutter_tools/gradle/flutter.gradle"
+// Flutter Gradle插件通过settings.gradle中的声明式配置自动应用
+// 不再需要使用apply plugin语法
 
 android {
     namespace 'com.example.recipe_app'
@@ -64,4 +63,10 @@ flutter {
 
 dependencies {
     implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk7:$kotlin_version"
+}
+
+// Flutter插件依赖（通过Flutter Gradle插件自动处理）
+// 注意：Flutter Gradle插件现在使用声明式配置
+flutter {
+    source '../..'
 }
