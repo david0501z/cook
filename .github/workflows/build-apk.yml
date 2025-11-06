@@ -7,7 +7,6 @@ permissions:
   packages: write
 
 on:
-  # 推送到主分支时自动构建
   push:
     branches: [ main, master ]
     paths:
@@ -16,7 +15,6 @@ on:
       - 'pubspec.yaml'
       - '.github/workflows/build-apk.yml'
   
-  # 拉取请求时构建
   pull_request:
     branches: [ main, master ]
     paths:
@@ -24,7 +22,6 @@ on:
       - 'android/**'
       - 'pubspec.yaml'
   
-  # 手动触发
   workflow_dispatch:
     inputs:
       build_type:
@@ -35,24 +32,6 @@ on:
         options:
           - debug
           - release
-      flutter_channel:
-        description: 'Flutter渠道'
-        required: true
-        default: 'stable'
-        type: choice
-        options:
-          - stable
-          - beta
-          - dev
-      java_version:
-        description: 'Java版本'
-        required: true
-        default: '17'
-        type: choice
-        options:
-          - '11'
-          - '17'
-          - '21'
 
 jobs:
   build:
@@ -62,177 +41,101 @@ jobs:
     - name: 检出代码
       uses: actions/checkout@v4
 
+    - name: 缓存Flutter SDK
+      uses: actions/cache@v3
+      id: flutter-cache
+      with:
+        path: |
+          /opt/hostedtoolcache/flutter
+          /usr/local/bin/flutter
+        key: flutter-cache-${{ runner.os }}-${{ hashFiles('**/.flutter-version') }}
+
     - name: 设置Flutter
+      if: steps.flutter-cache.outputs.cache-hit != 'true'
       uses: subosito/flutter-action@v2
       with:
-        flutter-version: ${{ inputs.flutter_channel || 'stable' }}
-        channel: ${{ inputs.flutter_channel || 'stable' }}
+        flutter-version: '3.22.0'
+        channel: 'stable'
         cache: true
 
     - name: 设置Java
       uses: actions/setup-java@v4
       with:
         distribution: 'zulu'
-        java-version: ${{ inputs.java_version || '17' }}
+        java-version: '17'
 
-    - name: 检查Flutter版本
+    - name: 接受Android许可证（快速方案）
+      uses: android-actions/setup-android@v3
+      with:
+        licenses: true
+
+    - name: 检查Flutter环境
       run: |
         flutter --version
-        flutter doctor --android-licenses
+        flutter doctor -v
 
-    - name: 接受Android许可证
-      run: |
-        yes | sdkmanager --licenses || true
-        flutter doctor --android-licenses
+    - name: 缓存Android SDK
+      uses: actions/cache@v3
+      id: android-cache
+      with:
+        path: |
+          ~/.android/build-cache
+          $ANDROID_HOME/.downloadIntermediates
+        key: android-cache-${{ runner.os }}-${{ hashFiles('**/android/**', '**/gradle/**') }}
+        restore-keys: |
+          android-cache-${{ runner.os }}-
+
+    - name: 缓存Gradle
+      uses: actions/cache@v3
+      id: gradle-cache
+      with:
+        path: |
+          ~/.gradle/caches
+          ~/.gradle/wrapper
+        key: gradle-${{ runner.os }}-${{ hashFiles('**/gradle/wrapper/gradle-wrapper.properties', '**/build.gradle') }}
+        restore-keys: |
+          gradle-${{ runner.os }}-
+
+    - name: 缓存Pub依赖
+      uses: actions/cache@v3
+      id: pub-cache
+      with:
+        path: |
+          ~/.pub-cache
+          .dart_tool
+        key: pub-${{ runner.os }}-${{ hashFiles('**/pubspec.lock') }}
+        restore-keys: |
+          pub-${{ runner.os }}-
 
     - name: 获取依赖
-      run: |
-        flutter pub get
-        echo "=== 依赖安装完成 ==="
-        flutter pub deps
+      run: flutter pub get
 
     - name: 分析代码
-      run: |
-        flutter analyze
-        echo "=== 代码分析完成 ==="
-
-    - name: 运行测试
-      run: |
-        if [ -d "test" ] && [ "$(ls -A test)" ]; then
-          flutter test
-          echo "=== 测试完成 ==="
-        else
-          echo "没有找到测试文件，跳过测试"
-        fi
-
-    - name: 设置签名配置（仅Release构建）
-      if: ${{ inputs.build_type == 'release' }}
-      run: |
-        echo "=== 配置Android签名 ==="
-        
-        # 检查必要的secrets是否存在
-        if [ -n "${{ secrets.KEYSTORE_FILE }}" ] && [ -n "${{ secrets.KEYSTORE_PASSWORD }}" ] && [ -n "${{ secrets.KEY_ALIAS }}" ] && [ -n "${{ secrets.KEY_PASSWORD }}" ]; then
-          echo "所有签名secrets已配置"
-          
-          # 创建密钥库文件
-          echo "${{ secrets.KEYSTORE_FILE }}" | base64 -d > android/app/release.keystore
-          
-          # 创建key.properties文件
-          cat > android/key.properties << EOF
-          storeFile=release.keystore
-          storePassword=${{ secrets.KEYSTORE_PASSWORD }}
-          keyAlias=${{ secrets.KEY_ALIAS }}
-          keyPassword=${{ secrets.KEY_PASSWORD }}
-          EOF
-          
-          echo "签名配置完成"
-          ls -la android/app/release.keystore
-        else
-          echo "警告: 签名secrets未完全配置，将使用debug签名"
-          echo "为了构建正式的Release APK，请配置以下GitHub Secrets:"
-          echo "- KEYSTORE_FILE (base64编码的密钥库文件)"
-          echo "- KEYSTORE_PASSWORD"
-          echo "- KEY_ALIAS"
-          echo "- KEY_PASSWORD"
-        fi
-
-    - name: 清理构建缓存
-      run: |
-        flutter clean
-        flutter pub get
+      run: flutter analyze
 
     - name: 构建APK
-      id: build
+      id: build_apk
       run: |
-        BUILD_TYPE="${{ inputs.build_type || 'debug' }}"
+        if [ "${{ github.event.inputs.build_type }}" = "release" ] || [ "${{ github.event_name }}" = "push" ]; then
+          BUILD_TYPE="release"
+          BUILD_ARGS="--release"
+          echo "构建Release APK"
+        else
+          BUILD_TYPE="debug"
+          BUILD_ARGS="--debug"
+          echo "构建Debug APK"
+        fi
+        
         echo "开始构建 $BUILD_TYPE APK..."
+        flutter build apk $BUILD_ARGS
         
-        if [ "$BUILD_TYPE" = "release" ]; then
-          flutter build apk --release --verbose
-        else
-          flutter build apk --debug --verbose
-        fi
-        
-        echo "=== APK构建完成 ==="
-        
-        # 获取APK文件信息
-        if [ -f "build/app/outputs/flutter-apk/app-$BUILD_TYPE.apk" ]; then
-          APK_PATH="build/app/outputs/flutter-apk/app-$BUILD_TYPE.apk"
-          echo "APK文件: $APK_PATH"
-          ls -lh "$APK_PATH"
-          echo "apk_path=$APK_PATH" >> $GITHUB_OUTPUT
-        else
-          echo "错误: APK文件未找到"
-          echo "build目录内容:"
-          find build -name "*.apk" 2>/dev/null || echo "没有找到APK文件"
-          exit 1
-        fi
+        APK_PATH="build/app/outputs/flutter-apk/app-$BUILD_TYPE.apk"
+        echo "apk_path=$APK_PATH" >> $GITHUB_OUTPUT
+        echo "build_type=$BUILD_TYPE" >> $GITHUB_OUTPUT
 
     - name: 上传APK构建产物
       uses: actions/upload-artifact@v4
       with:
-        name: flclash-browser-${{ inputs.build_type || 'debug' }}-apk
-        path: ${{ steps.build.outputs.apk_path }}
+        name: flclash-browser-${{ steps.build_apk.outputs.build_type }}-apk
+        path: ${{ steps.build_apk.outputs.apk_path }}
         retention-days: 30
-
-    - name: 生成构建信息
-      run: |
-        BUILD_TIME=$(date '+%Y-%m-%d %H:%M:%S')
-        BUILD_COMMIT=$(git rev-parse --short HEAD)
-        BUILD_BRANCH=${GITHUB_REF#refs/heads/}
-        FLUTTER_VERSION=$(flutter --version | head -1)
-        
-        cat > build_info.txt << EOF
-        构建时间: $BUILD_TIME
-        构建分支: $BUILD_BRANCH
-        提交哈希: $BUILD_COMMIT
-        Flutter版本: $FLUTTER_VERSION
-        构建类型: ${{ inputs.build_type || 'debug' }}
-        GitHub Run: $GITHUB_RUN_ID
-        EOF
-        
-        echo "=== 构建信息 ==="
-        cat build_info.txt
-
-    - name: 上传构建信息
-      uses: actions/upload-artifact@v4
-      with:
-        name: flclash-browser-build-info
-        path: build_info.txt
-        retention-days: 30
-
-    - name: 部署到GitHub Releases（仅release构建）
-      if: ${{ inputs.build_type == 'release' && github.event_name == 'push' }}
-      uses: softprops/action-gh-release@v1
-      with:
-        files: ${{ steps.build.outputs.apk_path }}
-        body: |
-          FlClash Browser APK Release Build
-          
-          构建信息：
-          - 构建时间: $(date '+%Y-%m-%d %H:%M:%S')
-          - 构建分支: ${GITHUB_REF#refs/heads/}
-          - 提交哈希: ${{ github.sha }}
-          - Flutter版本: $(flutter --version | head -1)
-          
-          请查看构建产物中的APK文件。
-        draft: false
-        prerelease: false
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-    - name: 失败时显示详细日志
-      if: failure()
-      run: |
-        echo "=== 构建失败，显示详细日志 ==="
-        echo "Flutter doctor信息:"
-        flutter doctor -v
-        echo ""
-        echo "Android相关环境:"
-        echo $ANDROID_HOME
-        echo $ANDROID_SDK_ROOT
-        echo ""
-        echo "最近构建日志:"
-        if [ -f "build/logs" ]; then
-          find build/logs -name "*.log" -exec tail -50 {} \; 2>/dev/null || true
-        fi
