@@ -12,12 +12,19 @@ on:
 jobs:
   rebuild-and-build:
     runs-on: ubuntu-latest
+
+        
+    # 添加权限
+    permissions:
+      contents: write
     
     steps:
     - name: 检出代码
       uses: actions/checkout@v4
       with:
         fetch-depth: 0
+        token: ${{ secrets.GITHUB_TOKEN }}
+
       
     - name: 设置Java
       uses: actions/setup-java@v4
@@ -114,12 +121,12 @@ jobs:
         flutter pub get
         
     - name: 构建APK
-      if: false
+      #if: false
       run: |
         flutter build apk --release --verbose
         
     - name: 上传APK
-      if: false
+      #if: false
       uses: actions/upload-artifact@v4
       with:
         name: app-release
