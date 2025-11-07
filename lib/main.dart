@@ -7,15 +7,15 @@ import 'database/database_helper.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   
-  // 初始化数据库
-  await DatabaseHelper.instance.database;
+  try {
+    // 初始化数据库
+    await DatabaseHelper.instance.database;
+    print('数据库初始化成功');
+  } catch (e) {
+    print('数据库初始化失败: $e');
+  }
   
-  runApp(
-    ChangeNotifierProvider(
-      create: (context) => RecipeProvider(),
-      child: const MyApp(),
-    ),
-  );
+  runApp(MyApp());
 }
 
 class MyApp extends StatelessWidget {
@@ -23,18 +23,21 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: '菜谱大全',
-      theme: ThemeData(
-        primarySwatch: Colors.orange,
-        useMaterial3: true,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: Colors.orange,
-          brightness: Brightness.light,
+    return ChangeNotifierProvider(
+      create: (context) => RecipeProvider(),
+      child: MaterialApp(
+        title: '菜谱大全',
+        theme: ThemeData(
+          primarySwatch: Colors.orange,
+          useMaterial3: true,
+          colorScheme: ColorScheme.fromSeed(
+            seedColor: Colors.orange,
+            brightness: Brightness.light,
+          ),
         ),
+        home: const HomeScreen(),
+        debugShowCheckedModeBanner: false,
       ),
-      home: const HomeScreen(),
-      debugShowCheckedModeBanner: false,
     );
   }
 }
